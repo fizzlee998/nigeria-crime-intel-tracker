@@ -29,19 +29,6 @@ Crime reporting in Nigerian news is scattered across dozens of outlets, in unstr
 - **Flask** — live dashboard
 - **schedule** — automatic hourly re-runs
 
-## Architecture
-
-
-## Setup
-
-1. Clone the repo
-2. Install dependencies:
-
-3. Create a `.env` file with a free Gemini API key from [aistudio.google.com](https://aistudio.google.com):
-4. Initialize the database:
-5. Run the app:
-6. Open `http://127.0.0.1:5000` in your browser
-
 ## Current scope (MVP)
 
 - Nigeria only
