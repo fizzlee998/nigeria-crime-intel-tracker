@@ -12,6 +12,14 @@
         .stats { margin-bottom: 20px; color: #555; display: flex; align-items: center; gap: 12px; }
         .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #2f855a; display: inline-block; animation: pulse 2s infinite; }
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .export-btn { background: #1a1a1a; color: white; padding: 6px 14px; border-radius: 4px; text-decoration: none; font-size: 13px; margin-left: 8px; }
+        .export-btn:hover { background: #333; }
+        .insights { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+        .insight-card { background: white; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .insight-card .value { font-size: 28px; font-weight: bold; color: #1a1a1a; }
+        .insight-card .label { font-size: 13px; color: #777; margin-top: 4px; }
+        .hotspot-list { list-style: none; padding: 0; margin: 8px 0 0 0; font-size: 13px; }
+        .hotspot-list li { padding: 3px 0; color: #333; }
         .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-bottom: 20px; }
         .chart-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .chart-card h3 { margin-top: 0; color: #333; font-size: 15px; }
@@ -21,7 +29,7 @@
         .filters label { font-size: 13px; color: #555; margin-right: 4px; }
         table { width: 100%; border-collapse: collapse; background: white; }
         th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background: #1a1a1a; color: white; cursor: pointer; }
+        th { background: #1a1a1a; color: white; }
         .robbery { color: #b30000; font-weight: bold; }
         .kidnapping { color: #b35c00; font-weight: bold; }
         .homicide { color: #7a0000; font-weight: bold; }
@@ -40,7 +48,11 @@
         <span class="live-dot"></span>
         <span id="statsText">{{ count }} incidents recorded</span>
         <span style="color:#999; font-size: 13px;">— auto-refreshes every 30s</span>
+        <a href="/export/excel" class="export-btn">Download Excel</a>
+        <a href="/export/pdf" class="export-btn">Download PDF</a>
     </div>
+
+    <div class="insights" id="insightsPanel"></div>
 
     <div class="charts">
         <div class="chart-card">
@@ -77,8 +89,9 @@
     <table>
         <thead>
         <tr>
-            <th>ID</th>
+            <th>#</th>
             <th>Title</th>
+            <th>Source</th>
             <th>Crime Type</th>
             <th>Location</th>
             <th>Confidence</th>
@@ -119,13 +132,14 @@
         function renderTable(incidents) {
             const tbody = document.getElementById('tableBody');
             if (incidents.length === 0) {
-                tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No incidents match these filters</td></tr>';
+                tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No incidents match these filters</td></tr>';
                 return;
             }
-            tbody.innerHTML = incidents.map(row => `
+            tbody.innerHTML = incidents.map((row, index) => `
                 <tr>
-                    <td>${row.id}</td>
-                    <td>${row.title}</td>
+                    <td>${index + 1}</td>
+                    <td>${row.title}${row.link ? ` <a href="${row.link}" target="_blank" rel="noopener">[source]</a>` : ''}</td>
+                    <td>${row.source || '—'}</td>
                     <td class="${row.crime_type}">${row.crime_type}</td>
                     <td>${row.location}</td>
                     <td class="confidence-${row.confidence}">${row.confidence}</td>
@@ -170,7 +184,7 @@
             typeChartInstance = new Chart(document.getElementById('typeChart'), {
                 type: 'bar',
                 data: { labels: typeLabels, datasets: [{ label: 'Incidents', data: typeLabels.map(t => byType[t]), backgroundColor: '#b30000' }] },
-                options: { plugins: { legend: { display: false } } }
+                options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
             });
 
             locationChartInstance = new Chart(document.getElementById('locationChart'), {
@@ -186,7 +200,7 @@
                 type: 'line',
                 data: { labels: dateLabels, datasets: [{ label: 'Incidents', data: dateLabels.map(d => byDate[d]),
                     borderColor: '#1a1a1a', backgroundColor: 'rgba(26,26,26,0.1)', fill: true, tension: 0.3 }] },
-                options: { plugins: { legend: { display: false } } }
+                options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
             });
         }
 
@@ -208,6 +222,28 @@
             document.getElementById('statsText').textContent = `${filtered.length} of ${allIncidents.length} incidents shown`;
         }
 
+        function loadInsights() {
+            fetch('/api/insights')
+                .then(res => res.json())
+                .then(data => {
+                    const hotspotItems = data.hotspots.map(h => `<li>${h.location} — ${h.count}</li>`).join('');
+                    document.getElementById('insightsPanel').innerHTML = `
+                        <div class="insight-card">
+                            <div class="value">${data.total_incidents}</div>
+                            <div class="label">Total Incidents</div>
+                        </div>
+                        <div class="insight-card">
+                            <div class="value">${data.top_crime_type ? data.top_crime_type.type : '—'}</div>
+                            <div class="label">Most Common Crime Type</div>
+                        </div>
+                        <div class="insight-card">
+                            <div class="label" style="margin-bottom:4px;">Top Hotspots</div>
+                            <ul class="hotspot-list">${hotspotItems || '<li>No data yet</li>'}</ul>
+                        </div>
+                    `;
+                });
+        }
+
         function loadIncidents() {
             fetch('/api/incidents')
                 .then(res => res.json())
@@ -216,6 +252,7 @@
                     populateFilterOptions(data);
                     applyFilters();
                 });
+            loadInsights();
         }
 
         document.getElementById('typeFilter').addEventListener('change', applyFilters);

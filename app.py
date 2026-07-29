@@ -4,9 +4,17 @@ import time
 import schedule
 import sqlite3
 import psycopg2
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, send_file
+from io import BytesIO
+from openpyxl import Workbook
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+from datetime import date
 
 from classify_and_save import run_pipeline, get_connection, DATABASE_URL
+from geocode import geocode_location
 
 app = Flask(__name__)
 
@@ -52,7 +60,10 @@ def ensure_database_exists():
                 location TEXT,
                 confidence TEXT,
                 summary TEXT,
-                date_added TEXT
+                date_added TEXT,
+                source TEXT,
+                link TEXT,
+                verified TEXT DEFAULT 'unverified'
             )
         """)
     else:
@@ -64,7 +75,10 @@ def ensure_database_exists():
                 location TEXT,
                 confidence TEXT,
                 summary TEXT,
-                date_added TEXT
+                date_added TEXT,
+                source TEXT,
+                link TEXT,
+                verified TEXT DEFAULT 'unverified'
             )
         """)
     connection.commit()
@@ -75,7 +89,7 @@ def get_all_incidents():
     connection = get_connection()
     cursor = connection.cursor()
     cursor.execute("""
-        SELECT id, title, crime_type, location, confidence, summary, date_added
+        SELECT id, title, crime_type, location, confidence, summary, date_added, source, link, verified, lat, lng
         FROM headlines
         ORDER BY id DESC
     """)
@@ -118,13 +132,102 @@ def incidents_api():
     rows = get_all_incidents()
     result = []
     for row in rows:
-        coords = get_coords(row[3])
         result.append({
             "id": row[0], "title": row[1], "crime_type": row[2], "location": row[3],
             "confidence": row[4], "summary": row[5], "date_added": row[6],
-            "lat": coords[0] if coords else None, "lng": coords[1] if coords else None,
+            "source": row[7], "link": row[8],
+            "lat": row[10], "lng": row[11],
         })
     return jsonify(result)
+
+
+@app.route("/api/insights")
+def insights():
+    connection = get_connection()
+    cursor = connection.cursor()
+    placeholder = "%s" if DATABASE_URL else "?"
+
+    cursor.execute(f"""
+        SELECT location, COUNT(*) as cnt FROM headlines
+        WHERE location != {placeholder}
+        GROUP BY location ORDER BY cnt DESC LIMIT 5
+    """, ("unknown",))
+    hotspots = cursor.fetchall()
+
+    cursor.execute("SELECT crime_type, COUNT(*) as cnt FROM headlines GROUP BY crime_type ORDER BY cnt DESC LIMIT 1")
+    top_crime = cursor.fetchone()
+
+    cursor.execute("SELECT COUNT(*) FROM headlines")
+    total = cursor.fetchone()[0]
+
+    connection.close()
+
+    return jsonify({
+        "hotspots": [{"location": h[0], "count": h[1]} for h in hotspots],
+        "top_crime_type": {"type": top_crime[0], "count": top_crime[1]} if top_crime else None,
+        "total_incidents": total,
+    })
+
+
+@app.route("/export/excel")
+def export_excel():
+    incidents = get_all_incidents()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Crime Incidents"
+
+    headers = ["ID", "Title", "Crime Type", "Location", "Confidence", "Summary", "Date Added", "Source", "Link"]
+    ws.append(headers)
+
+    for row in incidents:
+        ws.append(list(row)[:9])
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    filename = f"crime_incidents_{date.today().isoformat()}.xlsx"
+    return send_file(buffer, as_attachment=True, download_name=filename,
+                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.route("/export/pdf")
+def export_pdf():
+    incidents = get_all_incidents()
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4))
+    styles = getSampleStyleSheet()
+    elements = []
+
+    elements.append(Paragraph("Nigeria Crime Intelligence Report", styles["Title"]))
+    elements.append(Paragraph(f"Generated: {date.today().isoformat()} — {len(incidents)} incidents", styles["Normal"]))
+    elements.append(Spacer(1, 12))
+
+    table_data = [["ID", "Title", "Crime Type", "Location", "Confidence", "Date"]]
+    for row in incidents:
+        table_data.append([
+            str(row[0]),
+            row[1][:60] + ("..." if len(row[1]) > 60 else ""),
+            row[2], row[3], row[4], row[6]
+        ])
+
+    table = Table(table_data, repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a1a")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f4f4")]),
+    ]))
+    elements.append(table)
+
+    doc.build(elements)
+    buffer.seek(0)
+
+    filename = f"crime_report_{date.today().isoformat()}.pdf"
+    return send_file(buffer, as_attachment=True, download_name=filename, mimetype="application/pdf")
 
 
 def run_scheduler():

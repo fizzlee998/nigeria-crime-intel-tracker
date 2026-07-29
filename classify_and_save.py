@@ -67,18 +67,18 @@ def already_saved(cursor, title):
     return cursor.fetchone() is not None
 
 
-def save_to_database(cursor, headline, data):
+def save_to_database(cursor, headline, source, link, data):
+    from geocode import geocode_location
+    coords = geocode_location(data["location"])
+    lat, lng = coords if coords else (None, None)
+
     placeholder = "%s" if DATABASE_URL else "?"
     cursor.execute(f"""
-        INSERT INTO headlines (title, crime_type, location, confidence, summary, date_added)
-        VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+        INSERT INTO headlines (title, crime_type, location, confidence, summary, date_added, source, link, verified, lat, lng)
+        VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
     """, (
-        headline,
-        data["crime_type"],
-        data["location"],
-        data["confidence"],
-        data["summary"],
-        date.today().isoformat()
+        headline, data["crime_type"], data["location"], data["confidence"],
+        data["summary"], date.today().isoformat(), source, link, "unverified", lat, lng
     ))
 
 
@@ -123,7 +123,7 @@ def run_pipeline():
             continue
 
         try:
-            save_to_database(cursor, title, result)
+            save_to_database(cursor, title, h["source"], h["link"], result)
             connection.commit()
         except Exception as e:
             print(f"  ! Skipped — database error: {e}")
