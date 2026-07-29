@@ -1,11 +1,14 @@
-import sqlite3
+import os
+import psycopg2
 
-connection = sqlite3.connect("crime_intel.db")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+connection = psycopg2.connect(DATABASE_URL)
 cursor = connection.cursor()
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS headlines (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     title TEXT,
     crime_type TEXT,
     location TEXT,

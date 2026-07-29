@@ -2,6 +2,7 @@ import os
 import json
 import sqlite3
 import time
+import psycopg2
 from datetime import date
 from dotenv import load_dotenv
 from groq import Groq
@@ -11,6 +12,13 @@ from fetch_headlines import fetch_all_headlines, filter_crime_related
 load_dotenv()
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+
+def get_connection():
+    if DATABASE_URL:
+        return psycopg2.connect(DATABASE_URL)
+    return sqlite3.connect("crime_intel.db")
 
 
 def classify_headline(headline):
@@ -54,14 +62,16 @@ Category guide:
 
 
 def already_saved(cursor, title):
-    cursor.execute("SELECT id FROM headlines WHERE title = ?", (title,))
+    placeholder = "%s" if DATABASE_URL else "?"
+    cursor.execute(f"SELECT id FROM headlines WHERE title = {placeholder}", (title,))
     return cursor.fetchone() is not None
 
 
 def save_to_database(cursor, headline, data):
-    cursor.execute("""
+    placeholder = "%s" if DATABASE_URL else "?"
+    cursor.execute(f"""
         INSERT INTO headlines (title, crime_type, location, confidence, summary, date_added)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
     """, (
         headline,
         data["crime_type"],
@@ -78,7 +88,7 @@ def run_pipeline():
 
     print(f"\n[{date.today().isoformat()}] Fetched {len(all_headlines)} total, {len(crime_headlines)} crime-related.")
 
-    connection = sqlite3.connect("crime_intel.db")
+    connection = get_connection()
     cursor = connection.cursor()
 
     saved_count = 0
@@ -93,12 +103,12 @@ def run_pipeline():
             continue
 
         print(f"Classifying: {title}")
-        time.sleep(13)  # pacing between requests, safety margin under Groq's rate limit
+        time.sleep(13)
 
         try:
             result = classify_headline(title)
         except json.JSONDecodeError:
-            print(f"  ! Skipped — Groq returned invalid JSON for this headline")
+            print(f"  ! Skipped — AI returned invalid JSON for this headline")
             error_count += 1
             continue
         except Exception as e:
@@ -106,7 +116,6 @@ def run_pipeline():
             error_count += 1
             continue
 
-        # Even if JSON parsed, make sure the fields we need actually exist
         required_fields = ["crime_type", "location", "confidence", "summary"]
         if not all(field in result for field in required_fields):
             print(f"  ! Skipped — response missing required fields: {result}")
@@ -116,7 +125,7 @@ def run_pipeline():
         try:
             save_to_database(cursor, title, result)
             connection.commit()
-        except sqlite3.Error as e:
+        except Exception as e:
             print(f"  ! Skipped — database error: {e}")
             error_count += 1
             continue

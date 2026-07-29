@@ -3,13 +3,13 @@ import threading
 import time
 import schedule
 import sqlite3
+import psycopg2
 from flask import Flask, render_template, jsonify
 
-from classify_and_save import run_pipeline
+from classify_and_save import run_pipeline, get_connection, DATABASE_URL
 
 app = Flask(__name__)
 
-# Approximate coordinates for Nigerian states/cities commonly seen in headlines
 LOCATION_COORDS = {
     "lagos": (6.5244, 3.3792), "abuja": (9.0765, 7.3986), "kano": (12.0022, 8.5920),
     "kaduna": (10.5105, 7.4165), "katsina": (12.9908, 7.6018), "zamfara": (12.1704, 6.2649),
@@ -41,25 +41,38 @@ def get_coords(location):
 
 
 def ensure_database_exists():
-    connection = sqlite3.connect("crime_intel.db")
+    connection = get_connection()
     cursor = connection.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS headlines (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT,
-            crime_type TEXT,
-            location TEXT,
-            confidence TEXT,
-            summary TEXT,
-            date_added TEXT
-        )
-    """)
+    if DATABASE_URL:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS headlines (
+                id SERIAL PRIMARY KEY,
+                title TEXT,
+                crime_type TEXT,
+                location TEXT,
+                confidence TEXT,
+                summary TEXT,
+                date_added TEXT
+            )
+        """)
+    else:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS headlines (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                crime_type TEXT,
+                location TEXT,
+                confidence TEXT,
+                summary TEXT,
+                date_added TEXT
+            )
+        """)
     connection.commit()
     connection.close()
 
 
 def get_all_incidents():
-    connection = sqlite3.connect("crime_intel.db")
+    connection = get_connection()
     cursor = connection.cursor()
     cursor.execute("""
         SELECT id, title, crime_type, location, confidence, summary, date_added
@@ -71,8 +84,15 @@ def get_all_incidents():
     return rows
 
 
-def get_chart_data():
-    connection = sqlite3.connect("crime_intel.db")
+@app.route("/")
+def dashboard():
+    incidents = get_all_incidents()
+    return render_template("index.html", count=len(incidents))
+
+
+@app.route("/api/chart-data")
+def chart_data():
+    connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute("SELECT crime_type, COUNT(*) FROM headlines GROUP BY crime_type")
@@ -86,22 +106,11 @@ def get_chart_data():
 
     connection.close()
 
-    return {
+    return jsonify({
         "by_type": {"labels": [r[0] for r in by_type], "values": [r[1] for r in by_type]},
         "by_location": {"labels": [r[0] for r in by_location], "values": [r[1] for r in by_location]},
         "by_date": {"labels": [r[0] for r in by_date], "values": [r[1] for r in by_date]},
-    }
-
-
-@app.route("/")
-def dashboard():
-    incidents = get_all_incidents()
-    return render_template("index.html", count=len(incidents))
-
-
-@app.route("/api/chart-data")
-def chart_data():
-    return jsonify(get_chart_data())
+    })
 
 
 @app.route("/api/incidents")
