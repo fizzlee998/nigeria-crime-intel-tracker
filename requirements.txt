@@ -1,6 +1,6 @@
 flask
 feedparser
-google-genai
+groq
 python-dotenv
 schedule
 gunicorn

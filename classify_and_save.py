@@ -1,15 +1,16 @@
 import os
 import json
 import sqlite3
+import time
 from datetime import date
 from dotenv import load_dotenv
-from google import genai
+from groq import Groq
 
 from fetch_headlines import fetch_all_headlines, filter_crime_related
 
 load_dotenv()
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 
 def classify_headline(headline):
@@ -36,12 +37,12 @@ Category guide:
 - armed_attack: gunmen/bandit/herdsmen attacks on communities where the primary crime type isn't clear from the headline alone
 - other: anything crime-related that doesn't fit the above
 """
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}]
     )
 
-    raw_text = response.text.strip()
+    raw_text = response.choices[0].message.content.strip()
 
     if raw_text.startswith("```"):
         raw_text = raw_text.split("```")[1]
@@ -92,11 +93,12 @@ def run_pipeline():
             continue
 
         print(f"Classifying: {title}")
+        time.sleep(13)  # pacing between requests, safety margin under Groq's rate limit
 
         try:
             result = classify_headline(title)
         except json.JSONDecodeError:
-            print(f"  ! Skipped — Gemini returned invalid JSON for this headline")
+            print(f"  ! Skipped — Groq returned invalid JSON for this headline")
             error_count += 1
             continue
         except Exception as e:
