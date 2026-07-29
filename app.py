@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 import schedule
@@ -8,6 +9,22 @@ from classify_and_save import run_pipeline
 
 app = Flask(__name__)
 
+def ensure_database_exists():
+    connection = sqlite3.connect("crime_intel.db")
+    cursor = connection.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS headlines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            crime_type TEXT,
+            location TEXT,
+            confidence TEXT,
+            summary TEXT,
+            date_added TEXT
+        )
+    """)
+    connection.commit()
+    connection.close()
 
 def get_all_incidents():
     connection = sqlite3.connect("crime_intel.db")
@@ -37,9 +54,11 @@ def run_scheduler():
         time.sleep(60)
 
 
-if __name__ == "__main__":
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-    scheduler_thread.start()
+ensure_database_exists()
 
+scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+scheduler_thread.start()
+
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
