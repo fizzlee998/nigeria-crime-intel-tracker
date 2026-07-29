@@ -1,16 +1,20 @@
 import feedparser
 
-# A few Nigerian news RSS feeds — we'll start with these and can add more later
 RSS_FEEDS = {
     "Punch": "https://punchng.com/feed/",
     "Vanguard": "https://www.vanguardngr.com/feed/",
     "Premium Times": "https://www.premiumtimesng.com/feed",
+    "The Nation": "https://thenationonlineng.net/feed/",
+    "Daily Post": "https://dailypost.ng/feed",
+    "Legit": "https://www.legit.ng/rss/all.rss",
 }
 
 CRIME_KEYWORDS = [
     "robbery", "robbers", "robbed", "kidnap", "kidnapping", "kidnapped",
-    "abduct", "abducted", "gunmen", "bandits", "armed", "hostage",
-    "ransom", "rustled", "rustling"
+    "kidnappers", "abduct", "abducted", "abduction", "gunmen", "bandits",
+    "hostage", "hostages", "ransom", "rustled", "rustling", "rustlers",
+    "attack", "attacked", "gunned down", "shot dead", "invaded",
+    "terrorists", "insurgents", "killed by gunmen"
 ]
 
 
@@ -18,13 +22,16 @@ def fetch_all_headlines():
     all_headlines = []
 
     for source_name, url in RSS_FEEDS.items():
-        feed = feedparser.parse(url)
-        for entry in feed.entries:
-            all_headlines.append({
-                "title": entry.title,
-                "source": source_name,
-                "link": entry.link
-            })
+        try:
+            feed = feedparser.parse(url)
+            for entry in feed.entries:
+                all_headlines.append({
+                    "title": entry.title,
+                    "source": source_name,
+                    "link": entry.link
+                })
+        except Exception as e:
+            print(f"  ! Could not fetch {source_name}: {e}")
 
     return all_headlines
 

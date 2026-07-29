@@ -22,11 +22,19 @@ Headline: "{headline}"
 
 Return JSON in exactly this format:
 {{
-  "crime_type": "one of: robbery, kidnapping",
+  "crime_type": "one of: robbery, kidnapping, homicide, terrorism, armed_attack, other",
   "location": "city or state mentioned, or 'unknown' if none",
   "confidence": "high, medium, or low",
   "summary": "one sentence summary of the incident"
 }}
+
+Category guide:
+- robbery: theft, burglary, armed robbery of property/money
+- kidnapping: abduction, hostage-taking, ransom situations
+- homicide: killings, murders not tied to kidnapping or robbery
+- terrorism: attacks by named extremist/insurgent groups (e.g. Boko Haram, ISWAP)
+- armed_attack: gunmen/bandit/herdsmen attacks on communities where the primary crime type isn't clear from the headline alone
+- other: anything crime-related that doesn't fit the above
 """
     response = client.models.generate_content(
         model="gemini-2.5-flash",
