@@ -14,7 +14,6 @@ from reportlab.lib.styles import getSampleStyleSheet
 from datetime import date
 
 from classify_and_save import run_pipeline, get_connection, DATABASE_URL
-from geocode import geocode_location
 
 app = Flask(__name__)
 
@@ -36,18 +35,6 @@ LOCATION_COORDS = {
 }
 
 
-def get_coords(location):
-    if not location:
-        return None
-    key = location.strip().lower()
-    if key in LOCATION_COORDS:
-        return LOCATION_COORDS[key]
-    for name, coords in LOCATION_COORDS.items():
-        if name in key or key in name:
-            return coords
-    return None
-
-
 def ensure_database_exists():
     connection = get_connection()
     cursor = connection.cursor()
@@ -63,7 +50,11 @@ def ensure_database_exists():
                 date_added TEXT,
                 source TEXT,
                 link TEXT,
-                verified TEXT DEFAULT 'unverified'
+                verified TEXT DEFAULT 'unverified',
+                lat REAL,
+                lng REAL,
+                method TEXT,
+                named_group TEXT
             )
         """)
     else:
@@ -78,7 +69,11 @@ def ensure_database_exists():
                 date_added TEXT,
                 source TEXT,
                 link TEXT,
-                verified TEXT DEFAULT 'unverified'
+                verified TEXT DEFAULT 'unverified',
+                lat REAL,
+                lng REAL,
+                method TEXT,
+                named_group TEXT
             )
         """)
     connection.commit()
@@ -167,6 +162,61 @@ def insights():
         "top_crime_type": {"type": top_crime[0], "count": top_crime[1]} if top_crime else None,
         "total_incidents": total,
     })
+
+
+@app.route("/api/correlations")
+def correlations():
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT id, title, crime_type, location, method, named_group, date_added
+        FROM headlines
+        WHERE location != 'unknown'
+    """)
+    rows = cursor.fetchall()
+    connection.close()
+
+    groups = {}
+    for row in rows:
+        row_id, title, crime_type, location, method, named_group, date_added = row
+
+        key = (location, crime_type)
+        groups.setdefault(key, []).append({
+            "id": row_id, "title": title, "method": method, "date_added": date_added
+        })
+
+        if named_group and named_group.lower() != "none":
+            gkey = ("named_group", named_group)
+            groups.setdefault(gkey, []).append({
+                "id": row_id, "title": title, "method": method, "date_added": date_added
+            })
+
+    correlations_found = []
+    for key, incidents in groups.items():
+        if len(incidents) < 2:
+            continue
+
+        if key[0] == "named_group":
+            label = f"Multiple reports name '{key[1]}'"
+            confidence = "moderate"
+        else:
+            location, crime_type = key
+            methods = set(i["method"] for i in incidents if i["method"] and i["method"] != "unspecified")
+            shared_method = len(methods) == 1
+            label = f"{len(incidents)} {crime_type} reports in {location}"
+            confidence = "moderate" if shared_method else "low"
+
+        correlations_found.append({
+            "label": label,
+            "confidence": confidence,
+            "count": len(incidents),
+            "incidents": incidents,
+        })
+
+    correlations_found.sort(key=lambda c: c["count"], reverse=True)
+
+    return jsonify(correlations_found)
 
 
 @app.route("/export/excel")

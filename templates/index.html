@@ -6,6 +6,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 40px; background: #f4f4f4; }
         h1 { color: #1a1a1a; margin-bottom: 4px; }
@@ -24,6 +25,12 @@
         .chart-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .chart-card h3 { margin-top: 0; color: #333; font-size: 15px; }
         #map { height: 400px; border-radius: 8px; margin-bottom: 20px; }
+        .correlation-item { border-left: 3px solid #ccc; padding: 8px 12px; margin-bottom: 8px; background: #fafafa; }
+        .correlation-item.moderate { border-left-color: #b3860b; }
+        .correlation-item.low { border-left-color: #999; }
+        .correlation-item .label { font-weight: bold; font-size: 13px; }
+        .correlation-item .confidence-tag { font-size: 11px; text-transform: uppercase; color: #777; margin-left: 6px; }
+        .correlation-item ul { margin: 6px 0 0 0; padding-left: 18px; font-size: 12px; color: #444; }
         .filters { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; background: white; padding: 14px; border-radius: 8px; }
         .filters select, .filters input { padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
         .filters label { font-size: 13px; color: #555; margin-right: 4px; }
@@ -71,6 +78,15 @@
 
     <div id="map"></div>
 
+    <div class="chart-card" style="margin-bottom: 20px;">
+        <h3>Patterns Worth Reviewing</h3>
+        <p style="font-size: 12px; color: #999; margin-top: -4px;">
+            Incidents sharing location, crime type, or a named group — flagged for human review, not confirmed connections. Node connections below represent shared attributes only, not verified relationships.
+        </p>
+        <div id="networkGraph" style="height: 350px; border: 1px solid #eee; border-radius: 6px; margin-bottom: 16px; background: #fcfcfc;"></div>
+        <div id="correlationsPanel"></div>
+    </div>
+
     <div class="filters">
         <div>
             <label for="typeFilter">Crime Type</label>
@@ -112,6 +128,7 @@
         let markers = [];
 
         let typeChartInstance, locationChartInstance, trendChartInstance;
+        let networkInstance = null;
 
         function populateFilterOptions(incidents) {
             const typeSelect = document.getElementById('typeFilter');
@@ -244,6 +261,80 @@
                 });
         }
 
+        function renderNetworkGraph(correlationGroups) {
+            const nodes = [];
+            const edges = [];
+            const seenNodes = new Set();
+
+            const colorByConfidence = { moderate: '#b3860b', low: '#999999' };
+
+            correlationGroups.forEach((group, groupIndex) => {
+                const groupColor = colorByConfidence[group.confidence] || '#999999';
+
+                group.incidents.forEach(incident => {
+                    if (!seenNodes.has(incident.id)) {
+                        nodes.push({
+                            id: incident.id,
+                            label: incident.title.length > 40 ? incident.title.slice(0, 40) + '...' : incident.title,
+                            title: `${incident.title}\n${incident.date_added}`,
+                            color: { background: '#fff', border: groupColor },
+                            font: { size: 10 }
+                        });
+                        seenNodes.add(incident.id);
+                    }
+                });
+
+                for (let i = 0; i < group.incidents.length - 1; i++) {
+                    edges.push({
+                        from: group.incidents[i].id,
+                        to: group.incidents[i + 1].id,
+                        color: groupColor,
+                        dashes: group.confidence === 'low',
+                        label: group.confidence,
+                        font: { size: 9, color: '#999' }
+                    });
+                }
+            });
+
+            const container = document.getElementById('networkGraph');
+
+            if (nodes.length === 0) {
+                container.innerHTML = '<p style="padding: 16px; color:#999; font-size:13px;">No shared patterns to visualize yet.</p>';
+                return;
+            }
+
+            const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+            const options = {
+                physics: { stabilization: true, barnesHut: { gravitationalConstant: -3000 } },
+                edges: { smooth: true, width: 1.5 },
+                interaction: { hover: true }
+            };
+
+            if (networkInstance) networkInstance.destroy();
+            networkInstance = new vis.Network(container, data, options);
+        }
+
+        function loadCorrelations() {
+            fetch('/api/correlations')
+                .then(res => res.json())
+                .then(data => {
+                    renderNetworkGraph(data);
+
+                    const panel = document.getElementById('correlationsPanel');
+                    if (data.length === 0) {
+                        panel.innerHTML = '<p style="color:#999; font-size:13px;">No shared patterns identified yet — recommend reviewing manually as more data accumulates.</p>';
+                        return;
+                    }
+                    panel.innerHTML = data.map(c => `
+                        <div class="correlation-item ${c.confidence}">
+                            <span class="label">${c.label}</span>
+                            <span class="confidence-tag">${c.confidence} confidence — recommend review</span>
+                            <ul>${c.incidents.map(i => `<li>${i.title} (${i.date_added})</li>`).join('')}</ul>
+                        </div>
+                    `).join('');
+                });
+        }
+
         function loadIncidents() {
             fetch('/api/incidents')
                 .then(res => res.json())
@@ -253,6 +344,7 @@
                     applyFilters();
                 });
             loadInsights();
+            loadCorrelations();
         }
 
         document.getElementById('typeFilter').addEventListener('change', applyFilters);
