@@ -4,16 +4,17 @@ import time
 import schedule
 import sqlite3
 import psycopg2
-from flask import Flask, render_template, jsonify, send_file
+from flask import Flask, render_template, jsonify, send_file, request
 from io import BytesIO
 from openpyxl import Workbook
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from datetime import date
 
 from classify_and_save import run_pipeline, get_connection, DATABASE_URL
+from investigate_agent import run_investigation
 
 app = Flask(__name__)
 
@@ -219,6 +220,21 @@ def correlations():
     return jsonify(correlations_found)
 
 
+@app.route("/api/investigate", methods=["POST"])
+def investigate():
+    data = request.get_json()
+    question = (data or {}).get("question", "").strip()
+
+    if not question:
+        return jsonify({"error": "No question provided"}), 400
+
+    try:
+        result = run_investigation(question)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/export/excel")
 def export_excel():
     incidents = get_all_incidents()
@@ -249,27 +265,44 @@ def export_pdf():
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4))
     styles = getSampleStyleSheet()
+
+    link_style = ParagraphStyle(
+        "LinkCell", parent=styles["Normal"], fontSize=8, textColor=colors.HexColor("#1a4fb3")
+    )
+    plain_cell_style = ParagraphStyle("PlainCell", parent=styles["Normal"], fontSize=8)
+
     elements = []
 
     elements.append(Paragraph("Nigeria Crime Intelligence Report", styles["Title"]))
     elements.append(Paragraph(f"Generated: {date.today().isoformat()} — {len(incidents)} incidents", styles["Normal"]))
     elements.append(Spacer(1, 12))
 
-    table_data = [["ID", "Title", "Crime Type", "Location", "Confidence", "Date"]]
+    table_data = [["ID", "Title", "Crime Type", "Location", "Confidence", "Date", "Source"]]
     for row in incidents:
+        source_name = row[7] if row[7] else "—"
+        link_url = row[8]
+
+        if link_url:
+            source_cell = Paragraph(f'<link href="{link_url}"><u>{source_name}</u></link>', link_style)
+        else:
+            source_cell = Paragraph(source_name, plain_cell_style)
+
+        title_text = row[1][:55] + ("..." if len(row[1]) > 55 else "")
+
         table_data.append([
             str(row[0]),
-            row[1][:60] + ("..." if len(row[1]) > 60 else ""),
-            row[2], row[3], row[4], row[6]
+            Paragraph(title_text, plain_cell_style),
+            row[2], row[3], row[4], row[6], source_cell
         ])
 
-    table = Table(table_data, repeatRows=1)
+    table = Table(table_data, repeatRows=1, colWidths=[25, 220, 70, 60, 60, 60, 60])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a1a")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTSIZE", (0, 0), (-1, -1), 8),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f4f4")]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
     elements.append(table)
 

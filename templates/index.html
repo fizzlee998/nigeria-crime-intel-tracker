@@ -33,6 +33,16 @@
         .correlation-item .confidence-tag { font-size: 11px; text-transform: uppercase; color: #777; margin-left: 6px; }
         .correlation-item ul { margin: 6px 0 0 0; padding-left: 18px; font-size: 12px; color: #444; }
         .network-hint { font-size: 11px; color: #999; margin: 4px 0 8px 0; }
+        .investigate-result { border-left: 3px solid #999; padding: 12px 16px; background: #fafafa; border-radius: 0 6px 6px 0; }
+        .investigate-result.moderate { border-left-color: #b3860b; }
+        .investigate-result.low { border-left-color: #999; }
+        .investigate-result.insufficient_evidence { border-left-color: #ccc; }
+        .investigate-result h4 { margin: 0 0 6px 0; font-size: 14px; }
+        .investigate-result .conf-badge { font-size: 11px; text-transform: uppercase; color: #777; margin-left: 8px; }
+        .investigate-result .section-label { font-weight: bold; font-size: 12px; margin-top: 10px; }
+        .investigate-result p { font-size: 13px; margin: 4px 0; color: #333; }
+        .investigate-result .ids { font-size: 12px; color: #555; }
+        .investigate-loading { color: #999; font-size: 13px; font-style: italic; }
         .filters { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; background: white; padding: 14px; border-radius: 8px; }
         .filters select, .filters input { padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
         .filters label { font-size: 13px; color: #555; margin-right: 4px; }
@@ -96,6 +106,18 @@
         <div id="networkGraph" style="height: 350px; border: 1px solid #eee; border-radius: 6px; margin-bottom: 4px; background: #fcfcfc;"></div>
         <p class="network-hint">Click the graph to enable zoom/scroll.</p>
         <div id="correlationsPanel"></div>
+    </div>
+
+    <div class="chart-card" style="margin-bottom: 20px;">
+        <h3>Investigate a Question</h3>
+        <p style="font-size: 12px; color: #999; margin-top: -4px;">
+            Ask the analysis agent to investigate a specific pattern. It only draws on incidents already in the database and always cites its sources — never treat its output as a confirmed finding.
+        </p>
+        <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+            <input type="text" id="investigateInput" placeholder="e.g. Is there a pattern of kidnappings in Zamfara?" style="flex: 1; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
+            <button id="investigateBtn" style="background: #1a1a1a; color: white; border: none; padding: 8px 18px; border-radius: 4px; cursor: pointer; font-size: 14px;">Investigate</button>
+        </div>
+        <div id="investigateResult"></div>
     </div>
 
     <div class="filters">
@@ -388,15 +410,90 @@
                         panel.innerHTML = '<p style="color:#999; font-size:13px;">No shared patterns identified yet — recommend reviewing manually as more data accumulates.</p>';
                         return;
                     }
-                    panel.innerHTML = data.map(c => `
+                    panel.innerHTML = data.map((c, groupIdx) => {
+                        const visible = c.incidents.slice(0, 3);
+                        const hidden = c.incidents.slice(3);
+                        const hiddenHtml = hidden.map(i => `<li>${i.title} (${i.date_added})</li>`).join('');
+                        const toggleId = `toggle-${groupIdx}`;
+                        return `
                         <div class="correlation-item ${c.confidence}">
                             <span class="label">${c.label}</span>
                             <span class="confidence-tag">${c.confidence} confidence — recommend review</span>
-                            <ul>${c.incidents.map(i => `<li>${i.title} (${i.date_added})</li>`).join('')}</ul>
+                            <ul>
+                                ${visible.map(i => `<li>${i.title} (${i.date_added})</li>`).join('')}
+                                <li id="${toggleId}-hidden" style="display:none; list-style:none; margin-left:-18px;">
+                                    <ul>${hiddenHtml}</ul>
+                                </li>
+                            </ul>
+                            ${hidden.length > 0 ? `
+                                <button class="toggle-btn" data-target="${toggleId}-hidden" data-count="${hidden.length}"
+                                    style="font-size:11px; background:none; border:none; color:#555; text-decoration:underline; cursor:pointer; padding:0; margin-top:4px;">
+                                    Show ${hidden.length} more
+                                </button>
+                            ` : ''}
                         </div>
-                    `).join('');
+                    `;
+                    }).join('');
+
+                    document.querySelectorAll('.toggle-btn').forEach(btn => {
+                        btn.addEventListener('click', () => {
+                            const target = document.getElementById(btn.dataset.target);
+                            const isHidden = target.style.display === 'none';
+                            target.style.display = isHidden ? 'block' : 'none';
+                            btn.textContent = isHidden ? 'Show less' : `Show ${btn.dataset.count} more`;
+                        });
+                    });
                 });
         }
+
+        function runInvestigation() {
+            const question = document.getElementById('investigateInput').value.trim();
+            const resultDiv = document.getElementById('investigateResult');
+            if (!question) return;
+
+            resultDiv.innerHTML = '<p class="investigate-loading">Investigating — this can take up to a minute...</p>';
+
+            fetch('/api/investigate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.error) {
+                        resultDiv.innerHTML = `<p style="color:#b30000; font-size:13px;">Error: ${data.error}</p>`;
+                        return;
+                    }
+
+                    const confidenceClass = data.confidence || 'insufficient_evidence';
+                    const idsText = (data.supporting_incident_ids || []).join(', ') || 'none';
+
+                    resultDiv.innerHTML = `
+                        <div class="investigate-result ${confidenceClass}">
+                            <h4>${data.pattern_found ? 'Possible pattern identified' : 'No pattern identified'}
+                                <span class="conf-badge">${confidenceClass.replace('_', ' ')}</span>
+                            </h4>
+                            ${data.pattern_summary ? `<p>${data.pattern_summary}</p>` : ''}
+                            <div class="section-label">Reasoning</div>
+                            <p>${data.reasoning || '—'}</p>
+                            <div class="section-label">Contradicting / weak points</div>
+                            <p>${data.contradicting_or_weak_points || '—'}</p>
+                            <div class="section-label">Recommended next steps</div>
+                            <p>${data.recommended_next_steps || '—'}</p>
+                            <div class="section-label">Supporting incident IDs</div>
+                            <p class="ids">${idsText}</p>
+                        </div>
+                    `;
+                })
+                .catch(err => {
+                    resultDiv.innerHTML = `<p style="color:#b30000; font-size:13px;">Request failed: ${err}</p>`;
+                });
+        }
+
+        document.getElementById('investigateBtn').addEventListener('click', runInvestigation);
+        document.getElementById('investigateInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') runInvestigation();
+        });
 
         function loadIncidents() {
             fetch('/api/incidents')

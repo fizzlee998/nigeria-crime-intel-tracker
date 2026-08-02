@@ -1,8 +1,10 @@
 import os
 import json
+import re
 import sqlite3
 import time
 import psycopg2
+from difflib import SequenceMatcher
 from datetime import date
 from dotenv import load_dotenv
 from groq import Groq
@@ -14,11 +16,33 @@ load_dotenv()
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+DUPLICATE_SIMILARITY_THRESHOLD = 0.80
+
+STOPWORDS = {"a", "an", "the", "in", "on", "at", "to", "of", "for", "and",
+             "or", "as", "by", "with", "after", "over", "amid", "amidst"}
+
 
 def get_connection():
     if DATABASE_URL:
         return psycopg2.connect(DATABASE_URL)
     return sqlite3.connect("crime_intel.db")
+
+
+def normalize_title(title):
+    words = re.findall(r"[a-z0-9]+", title.lower())
+    words = [w for w in words if w not in STOPWORDS]
+    return " ".join(sorted(words))
+
+
+def similar_headline_exists(cursor, title):
+    normalized_new = normalize_title(title)
+    cursor.execute("SELECT title FROM headlines")
+    for (existing_title,) in cursor.fetchall():
+        normalized_existing = normalize_title(existing_title)
+        ratio = SequenceMatcher(None, normalized_new, normalized_existing).ratio()
+        if ratio >= DUPLICATE_SIMILARITY_THRESHOLD:
+            return True
+    return False
 
 
 def classify_headline(headline):
@@ -61,12 +85,6 @@ Category guide:
     return json.loads(raw_text)
 
 
-def already_saved(cursor, title):
-    placeholder = "%s" if DATABASE_URL else "?"
-    cursor.execute(f"SELECT id FROM headlines WHERE title = {placeholder}", (title,))
-    return cursor.fetchone() is not None
-
-
 def save_to_database(cursor, headline, source, link, data):
     from geocode import geocode_location
     coords = geocode_location(data["location"])
@@ -98,7 +116,7 @@ def run_pipeline():
     for h in crime_headlines:
         title = h["title"]
 
-        if already_saved(cursor, title):
+        if similar_headline_exists(cursor, title):
             skipped_count += 1
             continue
 
