@@ -15,6 +15,7 @@ from datetime import date
 
 from classify_and_save import run_pipeline, get_connection, DATABASE_URL
 from investigate_agent import run_investigation
+from situation_report import generate_situation_report
 
 app = Flask(__name__)
 
@@ -58,6 +59,16 @@ def ensure_database_exists():
                 named_group TEXT
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS reports (
+                id SERIAL PRIMARY KEY,
+                generated_at TEXT,
+                period_start TEXT,
+                period_end TEXT,
+                incident_count INTEGER,
+                content TEXT
+            )
+        """)
     else:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS headlines (
@@ -75,6 +86,16 @@ def ensure_database_exists():
                 lng REAL,
                 method TEXT,
                 named_group TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                generated_at TEXT,
+                period_start TEXT,
+                period_end TEXT,
+                incident_count INTEGER,
+                content TEXT
             )
         """)
     connection.commit()
@@ -259,6 +280,32 @@ def investigate():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/reports")
+def list_reports():
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute("""
+        SELECT id, generated_at, period_start, period_end, incident_count, content
+        FROM reports ORDER BY id DESC LIMIT 10
+    """)
+    rows = cursor.fetchall()
+    connection.close()
+
+    return jsonify([{
+        "id": r[0], "generated_at": r[1], "period_start": r[2],
+        "period_end": r[3], "incident_count": r[4], "content": r[5]
+    } for r in rows])
+
+
+@app.route("/api/reports/generate", methods=["POST"])
+def generate_report_now():
+    try:
+        content = generate_situation_report()
+        return jsonify({"success": True, "content": content})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/export/excel")
 def export_excel():
     incidents = get_all_incidents()
@@ -339,6 +386,7 @@ def export_pdf():
 
 def run_scheduler():
     schedule.every(1).hours.do(run_pipeline)
+    schedule.every().monday.at("06:00").do(generate_situation_report)
     run_pipeline()
 
     while True:

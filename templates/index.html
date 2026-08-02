@@ -43,6 +43,9 @@
         .investigate-result p { font-size: 13px; margin: 4px 0; color: #333; }
         .investigate-result .ids { font-size: 12px; color: #555; }
         .investigate-loading { color: #999; font-size: 13px; font-style: italic; }
+        .report-item { border-left: 3px solid #2b6cb0; padding: 10px 14px; margin-bottom: 10px; background: #fafafa; border-radius: 0 6px 6px 0; }
+        .report-item .report-meta { font-size: 11px; color: #999; margin-bottom: 6px; }
+        .report-item .report-content { font-size: 13px; color: #333; white-space: pre-wrap; }
         .filters { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; background: white; padding: 14px; border-radius: 8px; }
         .filters select, .filters input { padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
         .filters label { font-size: 13px; color: #555; margin-right: 4px; }
@@ -124,6 +127,17 @@
             <button id="investigateBtn" style="background: #1a1a1a; color: white; border: none; padding: 8px 18px; border-radius: 4px; cursor: pointer; font-size: 14px;">Investigate</button>
         </div>
         <div id="investigateResult"></div>
+    </div>
+
+    <div class="chart-card" style="margin-bottom: 20px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h3 style="margin:0;">Situation Reports</h3>
+            <button id="generateReportBtn" style="background:#1a1a1a; color:white; border:none; padding:6px 14px; border-radius:4px; cursor:pointer; font-size:13px;">Generate now</button>
+        </div>
+        <p style="font-size: 12px; color: #999; margin: 4px 0 12px 0;">
+            Auto-generated weekly (Mondays), summarizing reported incidents from media sources only — not verified crime statistics.
+        </p>
+        <div id="reportsPanel"></div>
     </div>
 
     <div class="filters">
@@ -511,6 +525,41 @@
             if (e.key === 'Enter') runInvestigation();
         });
 
+        function loadReports() {
+            fetch('/api/reports')
+                .then(res => res.json())
+                .then(data => {
+                    const panel = document.getElementById('reportsPanel');
+                    if (data.length === 0) {
+                        panel.innerHTML = '<p style="color:#999; font-size:13px;">No reports generated yet.</p>';
+                        return;
+                    }
+                    panel.innerHTML = data.map(r => `
+                        <div class="report-item">
+                            <div class="report-meta">Generated ${r.generated_at} — covering ${r.period_start} to ${r.period_end} (${r.incident_count} incidents)</div>
+                            <div class="report-content">${r.content}</div>
+                        </div>
+                    `).join('');
+                });
+        }
+
+        document.getElementById('generateReportBtn').addEventListener('click', () => {
+            const btn = document.getElementById('generateReportBtn');
+            btn.disabled = true;
+            btn.textContent = 'Generating...';
+            fetch('/api/reports/generate', { method: 'POST' })
+                .then(res => res.json())
+                .then(() => {
+                    btn.disabled = false;
+                    btn.textContent = 'Generate now';
+                    loadReports();
+                })
+                .catch(() => {
+                    btn.disabled = false;
+                    btn.textContent = 'Generate now';
+                });
+        });
+
         function showEvidenceModal(incidentId) {
             const modal = document.getElementById('evidenceModal');
             const body = document.getElementById('evidenceModalBody');
@@ -591,6 +640,7 @@
                 });
             loadInsights();
             loadCorrelations();
+            loadReports();
         }
 
         document.getElementById('typeFilter').addEventListener('change', () => applyFilters());
