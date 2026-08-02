@@ -137,6 +137,30 @@ def incidents_api():
     return jsonify(result)
 
 
+@app.route("/api/incident/<int:incident_id>")
+def incident_detail(incident_id):
+    connection = get_connection()
+    cursor = connection.cursor()
+    placeholder = "%s" if DATABASE_URL else "?"
+    cursor.execute(f"""
+        SELECT id, title, crime_type, location, confidence, summary, date_added,
+               source, link, lat, lng, method, named_group
+        FROM headlines WHERE id = {placeholder}
+    """, (incident_id,))
+    row = cursor.fetchone()
+    connection.close()
+
+    if not row:
+        return jsonify({"error": "Not found"}), 404
+
+    return jsonify({
+        "id": row[0], "title": row[1], "crime_type": row[2], "location": row[3],
+        "confidence": row[4], "summary": row[5], "date_added": row[6],
+        "source": row[7], "link": row[8], "lat": row[9], "lng": row[10],
+        "method": row[11], "named_group": row[12],
+    })
+
+
 @app.route("/api/insights")
 def insights():
     connection = get_connection()

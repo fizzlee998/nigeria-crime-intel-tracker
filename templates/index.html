@@ -66,6 +66,12 @@
         .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
         .pagination button:not(:disabled):hover { background: #eee; }
         .pagination .page-info { font-size: 13px; color: #555; }
+        .evidence-field { margin-bottom: 12px; }
+        .evidence-field .ev-label { font-size: 11px; text-transform: uppercase; color: #999; font-weight: bold; }
+        .evidence-field .ev-value { font-size: 14px; color: #222; margin-top: 2px; }
+        .evidence-raw { background: #f4f4f4; padding: 10px 12px; border-radius: 4px; font-style: italic; border-left: 3px solid #1a1a1a; }
+        .table-row-clickable { cursor: pointer; }
+        .table-row-clickable:hover { background: #f9f9f9; }
     </style>
 </head>
 <body>
@@ -162,6 +168,16 @@
         <button id="nextPageBtn">Next &rarr;</button>
     </div>
 
+    <div id="evidenceModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000;">
+        <div style="background:white; max-width:600px; margin:60px auto; padding:24px; border-radius:8px; max-height:80vh; overflow-y:auto;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <h3 style="margin:0;">Evidence Trail</h3>
+                <button id="closeModalBtn" style="border:none; background:none; font-size:20px; cursor:pointer; color:#999;">&times;</button>
+            </div>
+            <div id="evidenceModalBody"></div>
+        </div>
+    </div>
+
     <script>
         const PAGE_SIZE = 20;
         let currentPage = 1;
@@ -212,9 +228,9 @@
                 tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No incidents match these filters</td></tr>';
             } else {
                 tbody.innerHTML = pageRows.map((row, index) => `
-                    <tr>
+                    <tr class="table-row-clickable" onclick="showEvidenceModal(${row.id})">
                         <td>${startIdx + index + 1}</td>
-                        <td>${row.title}${row.link ? ` <a href="${row.link}" target="_blank" rel="noopener">[source]</a>` : ''}</td>
+                        <td>${row.title}${row.link ? ` <a href="${row.link}" target="_blank" rel="noopener" onclick="event.stopPropagation()">[source]</a>` : ''}</td>
                         <td>${row.source || '—'}</td>
                         <td class="${row.crime_type}">${row.crime_type}</td>
                         <td>${row.location}</td>
@@ -493,6 +509,76 @@
         document.getElementById('investigateBtn').addEventListener('click', runInvestigation);
         document.getElementById('investigateInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') runInvestigation();
+        });
+
+        function showEvidenceModal(incidentId) {
+            const modal = document.getElementById('evidenceModal');
+            const body = document.getElementById('evidenceModalBody');
+            body.innerHTML = '<p style="color:#999; font-size:13px;">Loading...</p>';
+            modal.style.display = 'block';
+
+            fetch(`/api/incident/${incidentId}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.error) {
+                        body.innerHTML = `<p style="color:#b30000;">${data.error}</p>`;
+                        return;
+                    }
+                    body.innerHTML = `
+                        <div class="evidence-field">
+                            <div class="ev-label">Raw headline (as published)</div>
+                            <div class="ev-value evidence-raw">"${data.title}"</div>
+                        </div>
+                        <div class="evidence-field">
+                            <div class="ev-label">Source</div>
+                            <div class="ev-value">${data.source || 'Unknown'}${data.link ? ` — <a href="${data.link}" target="_blank" rel="noopener">view original article</a>` : ' (no link recorded)'}</div>
+                        </div>
+                        <div class="evidence-field">
+                            <div class="ev-label">AI-extracted crime type</div>
+                            <div class="ev-value">${data.crime_type}</div>
+                        </div>
+                        <div class="evidence-field">
+                            <div class="ev-label">AI-extracted location</div>
+                            <div class="ev-value">${data.location}${data.lat && data.lng ? ` (geocoded to ${data.lat.toFixed(3)}, ${data.lng.toFixed(3)})` : ' (not geocoded)'}</div>
+                        </div>
+                        <div class="evidence-field">
+                            <div class="ev-label">AI-extracted method</div>
+                            <div class="ev-value">${data.method || 'Not extracted'}</div>
+                        </div>
+                        <div class="evidence-field">
+                            <div class="ev-label">Named group (if any)</div>
+                            <div class="ev-value">${(data.named_group && data.named_group.toLowerCase() !== 'none') ? data.named_group : 'None named'}</div>
+                        </div>
+                        <div class="evidence-field">
+                            <div class="ev-label">AI's self-reported confidence</div>
+                            <div class="ev-value confidence-${data.confidence}">${data.confidence}</div>
+                        </div>
+                        <div class="evidence-field">
+                            <div class="ev-label">AI-generated summary</div>
+                            <div class="ev-value">${data.summary}</div>
+                        </div>
+                        <div class="evidence-field">
+                            <div class="ev-label">Date added to database</div>
+                            <div class="ev-value">${data.date_added}</div>
+                        </div>
+                        <p style="font-size:11px; color:#999; margin-top:16px; border-top:1px solid #eee; padding-top:10px;">
+                            All fields above except the raw headline were extracted by an AI model reading only the headline text.
+                            This has not been independently verified — always check the original article before treating this as fact.
+                        </p>
+                    `;
+                })
+                .catch(() => {
+                    body.innerHTML = '<p style="color:#b30000;">Failed to load.</p>';
+                });
+        }
+
+        document.getElementById('closeModalBtn').addEventListener('click', () => {
+            document.getElementById('evidenceModal').style.display = 'none';
+        });
+        document.getElementById('evidenceModal').addEventListener('click', (e) => {
+            if (e.target.id === 'evidenceModal') {
+                document.getElementById('evidenceModal').style.display = 'none';
+            }
         });
 
         function loadIncidents() {
