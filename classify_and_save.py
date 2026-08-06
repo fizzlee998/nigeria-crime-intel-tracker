@@ -55,19 +55,26 @@ Headline: "{headline}"
 
 Return JSON in exactly this format:
 {{
+  "is_crime_incident": true or false,
   "crime_type": "one of: robbery, kidnapping, homicide, terrorism, armed_attack, other",
-  "location": "city or state mentioned, or 'unknown' if none",
+  "location": "specific city or state if named, otherwise a broader Nigerian region if implied (e.g. 'North West Nigeria', 'South East Nigeria'), otherwise 'unknown'",
   "confidence": "high, medium, or low",
   "summary": "one sentence summary of the incident"
 }}
 
-Category guide:
+First decide is_crime_incident:
+- true ONLY if this headline describes a SPECIFIC crime incident that occurred in Nigeria (an actual robbery, kidnapping, killing, terrorist attack, or armed attack event).
+- false if the headline is about: entertainment/celebrity news, sports, deaths from illness/accident (not crime), politics/opinion/commentary, international news not about Nigeria, cartoons/satire, or any story where no specific criminal incident is being reported — even if the words "attack" or "terrorist" appear.
+
+If is_crime_incident is false, still fill in the other fields as best you can, but set crime_type to "other" and keep the response brief — this record will not be saved.
+
+Category guide (only relevant if is_crime_incident is true):
 - robbery: theft, burglary, armed robbery of property/money
 - kidnapping: abduction, hostage-taking, ransom situations
 - homicide: killings, murders not tied to kidnapping or robbery
 - terrorism: attacks by named extremist/insurgent groups (e.g. Boko Haram, ISWAP)
 - armed_attack: gunmen/bandit/herdsmen attacks on communities where the primary crime type isn't clear from the headline alone
-- other: anything crime-related that doesn't fit the above
+- other: a real Nigerian crime incident that doesn't fit the above categories
 """
     response = client.chat.completions.create(
         model="openai/gpt-oss-120b",
@@ -111,6 +118,7 @@ def run_pipeline():
 
     saved_count = 0
     skipped_count = 0
+    irrelevant_count = 0
     error_count = 0
 
     for h in crime_headlines:
@@ -134,10 +142,15 @@ def run_pipeline():
             error_count += 1
             continue
 
-        required_fields = ["crime_type", "location", "confidence", "summary"]
+        required_fields = ["is_crime_incident", "crime_type", "location", "confidence", "summary"]
         if not all(field in result for field in required_fields):
             print(f"  ! Skipped — response missing required fields: {result}")
             error_count += 1
+            continue
+
+        if not result["is_crime_incident"]:
+            print(f"  -> Not a Nigerian crime incident, skipping")
+            irrelevant_count += 1
             continue
 
         try:
@@ -152,7 +165,7 @@ def run_pipeline():
         saved_count += 1
 
     connection.close()
-    print(f"Done. Saved {saved_count} new, skipped {skipped_count} duplicates, {error_count} errors.")
+    print(f"Done. Saved {saved_count} new, skipped {skipped_count} duplicates, {irrelevant_count} irrelevant, {error_count} errors.")
 
 
 if __name__ == "__main__":

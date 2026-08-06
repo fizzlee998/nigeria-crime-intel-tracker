@@ -210,61 +210,6 @@ def insights():
     })
 
 
-@app.route("/api/correlations")
-def correlations():
-    connection = get_connection()
-    cursor = connection.cursor()
-
-    cursor.execute("""
-        SELECT id, title, crime_type, location, method, named_group, date_added
-        FROM headlines
-        WHERE location != 'unknown'
-    """)
-    rows = cursor.fetchall()
-    connection.close()
-
-    groups = {}
-    for row in rows:
-        row_id, title, crime_type, location, method, named_group, date_added = row
-
-        key = (location, crime_type)
-        groups.setdefault(key, []).append({
-            "id": row_id, "title": title, "method": method, "date_added": date_added
-        })
-
-        if named_group and named_group.lower() != "none":
-            gkey = ("named_group", named_group)
-            groups.setdefault(gkey, []).append({
-                "id": row_id, "title": title, "method": method, "date_added": date_added
-            })
-
-    correlations_found = []
-    for key, incidents in groups.items():
-        if len(incidents) < 2:
-            continue
-
-        if key[0] == "named_group":
-            label = f"Multiple reports name '{key[1]}'"
-            confidence = "moderate"
-        else:
-            location, crime_type = key
-            methods = set(i["method"] for i in incidents if i["method"] and i["method"] != "unspecified")
-            shared_method = len(methods) == 1
-            label = f"{len(incidents)} {crime_type} reports in {location}"
-            confidence = "moderate" if shared_method else "low"
-
-        correlations_found.append({
-            "label": label,
-            "confidence": confidence,
-            "count": len(incidents),
-            "incidents": incidents,
-        })
-
-    correlations_found.sort(key=lambda c: c["count"], reverse=True)
-
-    return jsonify(correlations_found)
-
-
 @app.route("/api/investigate", methods=["POST"])
 def investigate():
     data = request.get_json()
@@ -304,6 +249,50 @@ def generate_report_now():
         return jsonify({"success": True, "content": content})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/source-stats")
+def source_stats():
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT id, source, crime_type, location
+        FROM headlines
+        WHERE location != 'unknown' AND source IS NOT NULL
+    """)
+    rows = cursor.fetchall()
+    connection.close()
+
+    groups = {}
+    for row_id, source, crime_type, location in rows:
+        key = (location, crime_type)
+        groups.setdefault(key, []).append({"id": row_id, "source": source})
+
+    source_totals = {}
+    source_corroborated = {}
+
+    for key, incidents in groups.items():
+        sources_in_group = set(i["source"] for i in incidents)
+        for incident in incidents:
+            src = incident["source"]
+            source_totals[src] = source_totals.get(src, 0) + 1
+            other_sources_present = len(sources_in_group - {src}) > 0
+            if other_sources_present:
+                source_corroborated[src] = source_corroborated.get(src, 0) + 1
+
+    result = []
+    for src, total in source_totals.items():
+        corroborated = source_corroborated.get(src, 0)
+        result.append({
+            "source": src,
+            "total_reports": total,
+            "corroborated_count": corroborated,
+            "corroboration_rate": round(corroborated / total * 100, 1) if total > 0 else 0,
+        })
+
+    result.sort(key=lambda x: x["total_reports"], reverse=True)
+    return jsonify(result)
 
 
 @app.route("/export/excel")
